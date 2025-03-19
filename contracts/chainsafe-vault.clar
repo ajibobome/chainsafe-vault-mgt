@@ -410,4 +410,55 @@
   )
 )
 
+;; Add vault metadata
+(define-public (attach-vault-metadata (vault-id uint) (metadata-kind (string-ascii 20)) (metadata-hash (buff 32)))
+  (begin
+    (asserts! (valid-vault-id? vault-id) ERR_BAD_ID)
+    (let
+      (
+        (vault-data (unwrap! (map-get? VaultStorage { vault-id: vault-id }) ERR_NO_VAULT))
+        (creator (get creator vault-data))
+        (recipient (get recipient vault-data))
+      )
+      ;; Only authorized parties can add metadata
+      (asserts! (or (is-eq tx-sender creator) (is-eq tx-sender recipient) (is-eq tx-sender CONTRACT_ADMIN)) ERR_NOT_ALLOWED)
+      (asserts! (not (is-eq (get vault-state vault-data) "completed")) (err u160))
+      (asserts! (not (is-eq (get vault-state vault-data) "returned")) (err u161))
+      (asserts! (not (is-eq (get vault-state vault-data) "expired")) (err u162))
+
+      ;; Valid metadata types
+      (asserts! (or (is-eq metadata-kind "token-details") 
+                   (is-eq metadata-kind "transfer-proof")
+                   (is-eq metadata-kind "quality-check")
+                   (is-eq metadata-kind "creator-preferences")) (err u163))
+
+      (print {action: "metadata_attached", vault-id: vault-id, metadata-kind: metadata-kind, 
+              metadata-hash: metadata-hash, submitter: tx-sender})
+      (ok true)
+    )
+  )
+)
+
+;; Create time-locked backup recovery
+(define-public (setup-timelock-recovery (vault-id uint) (delay-blocks uint) (recovery-address principal))
+  (begin
+    (asserts! (valid-vault-id? vault-id) ERR_BAD_ID)
+    (asserts! (> delay-blocks u72) ERR_BAD_AMOUNT) ;; Minimum 72 blocks delay (~12 hours)
+    (asserts! (<= delay-blocks u1440) ERR_BAD_AMOUNT) ;; Maximum 1440 blocks delay (~10 days)
+    (let
+      (
+        (vault-data (unwrap! (map-get? VaultStorage { vault-id: vault-id }) ERR_NO_VAULT))
+        (creator (get creator vault-data))
+        (unlock-block (+ block-height delay-blocks))
+      )
+      (asserts! (is-eq tx-sender creator) ERR_NOT_ALLOWED)
+      (asserts! (is-eq (get vault-state vault-data) "pending") ERR_ALREADY_HANDLED)
+      (asserts! (not (is-eq recovery-address creator)) (err u180)) ;; Recovery address must differ from creator
+      (asserts! (not (is-eq recovery-address (get recipient vault-data))) (err u181)) ;; Recovery address must differ from recipient
+      (print {action: "timelock_recovery_created", vault-id: vault-id, creator: creator, 
+              recovery-address: recovery-address, unlock-block: unlock-block})
+      (ok unlock-block)
+    )
+  )
+)
 

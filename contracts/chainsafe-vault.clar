@@ -540,4 +540,73 @@
   )
 )
 
+;; Transfer vault ownership
+(define-public (transfer-vault-ownership (vault-id uint) (new-owner principal) (auth-code (buff 32)))
+  (begin
+    (asserts! (valid-vault-id? vault-id) ERR_BAD_ID)
+    (let
+      (
+        (vault-data (unwrap! (map-get? VaultStorage { vault-id: vault-id }) ERR_NO_VAULT))
+        (current-owner (get creator vault-data))
+        (current-state (get vault-state vault-data))
+      )
+      ;; Only current owner or admin can transfer
+      (asserts! (or (is-eq tx-sender current-owner) (is-eq tx-sender CONTRACT_ADMIN)) ERR_NOT_ALLOWED)
+      ;; New owner must be different
+      (asserts! (not (is-eq new-owner current-owner)) (err u210))
+      (asserts! (not (is-eq new-owner (get recipient vault-data))) (err u211))
+      ;; Only certain states allow transfer
+      (asserts! (or (is-eq current-state "pending") (is-eq current-state "accepted")) ERR_ALREADY_HANDLED)
+      ;; Update vault ownership
+      (map-set VaultStorage
+        { vault-id: vault-id }
+        (merge vault-data { creator: new-owner })
+      )
+      (print {action: "ownership_transferred", vault-id: vault-id, 
+              previous-owner: current-owner, new-owner: new-owner, auth-hash: (hash160 auth-code)})
+      (ok true)
+    )
+  )
+)
+
+;; Process secure withdrawals
+(define-public (process-secure-withdrawal (vault-id uint) (withdraw-amount uint) (approval-sig (buff 65)))
+  (begin
+    (asserts! (valid-vault-id? vault-id) ERR_BAD_ID)
+    (let
+      (
+        (vault-data (unwrap! (map-get? VaultStorage { vault-id: vault-id }) ERR_NO_VAULT))
+        (creator (get creator vault-data))
+        (recipient (get recipient vault-data))
+        (amount (get amount vault-data))
+        (state (get vault-state vault-data))
+      )
+      ;; Only admin can process secure withdrawals
+      (asserts! (is-eq tx-sender CONTRACT_ADMIN) ERR_NOT_ALLOWED)
+      ;; Only from disputed vaults
+      (asserts! (is-eq state "disputed") (err u220))
+      ;; Amount validation
+      (asserts! (<= withdraw-amount amount) ERR_BAD_AMOUNT)
+      ;; Minimum timelock before withdrawal (48 blocks, ~8 hours)
+      (asserts! (>= block-height (+ (get start-block vault-data) u48)) (err u221))
+
+      ;; Process withdrawal
+      (unwrap! (as-contract (stx-transfer? withdraw-amount tx-sender creator)) ERR_TRANSFER_FAILED)
+
+      ;; Update vault record
+      (map-set VaultStorage
+        { vault-id: vault-id }
+        (merge vault-data { amount: (- amount withdraw-amount) })
+      )
+
+      (print {action: "withdrawal_processed", vault-id: vault-id, creator: creator, 
+              amount: withdraw-amount, remaining: (- amount withdraw-amount)})
+      (ok true)
+    )
+  )
+)
+
+
+
+
 

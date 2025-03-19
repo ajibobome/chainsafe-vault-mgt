@@ -209,4 +209,40 @@
   )
 )
 
+;; Add signature verification
+(define-public (add-verify-signature (vault-id uint) (signature (buff 65)))
+  (begin
+    (asserts! (valid-vault-id? vault-id) ERR_BAD_ID)
+    (let
+      (
+        (vault-data (unwrap! (map-get? VaultStorage { vault-id: vault-id }) ERR_NO_VAULT))
+        (creator (get creator vault-data))
+        (recipient (get recipient vault-data))
+      )
+      (asserts! (or (is-eq tx-sender creator) (is-eq tx-sender recipient)) ERR_NOT_ALLOWED)
+      (asserts! (or (is-eq (get vault-state vault-data) "pending") (is-eq (get vault-state vault-data) "accepted")) ERR_ALREADY_HANDLED)
+      (print {action: "signature_verified", vault-id: vault-id, signer: tx-sender, signature: signature})
+      (ok true)
+    )
+  )
+)
+
+;; Set backup address
+(define-public (set-backup-address (vault-id uint) (backup-address principal))
+  (begin
+    (asserts! (valid-vault-id? vault-id) ERR_BAD_ID)
+    (let
+      (
+        (vault-data (unwrap! (map-get? VaultStorage { vault-id: vault-id }) ERR_NO_VAULT))
+        (creator (get creator vault-data))
+      )
+      (asserts! (is-eq tx-sender creator) ERR_NOT_ALLOWED)
+      (asserts! (not (is-eq backup-address tx-sender)) (err u111)) ;; Backup address must be different
+      (asserts! (is-eq (get vault-state vault-data) "pending") ERR_ALREADY_HANDLED)
+      (print {action: "backup_set", vault-id: vault-id, creator: creator, backup: backup-address})
+      (ok true)
+    )
+  )
+)
+
 

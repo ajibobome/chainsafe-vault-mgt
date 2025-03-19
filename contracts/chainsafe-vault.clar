@@ -156,4 +156,57 @@
   )
 )
 
+;; Claim expired vault assets
+(define-public (claim-expired-vault (vault-id uint))
+  (begin
+    (asserts! (valid-vault-id? vault-id) ERR_BAD_ID)
+    (let
+      (
+        (vault-data (unwrap! (map-get? VaultStorage { vault-id: vault-id }) ERR_NO_VAULT))
+        (creator (get creator vault-data))
+        (amount (get amount vault-data))
+        (expiry (get end-block vault-data))
+      )
+      (asserts! (or (is-eq tx-sender creator) (is-eq tx-sender CONTRACT_ADMIN)) ERR_NOT_ALLOWED)
+      (asserts! (or (is-eq (get vault-state vault-data) "pending") (is-eq (get vault-state vault-data) "accepted")) ERR_ALREADY_HANDLED)
+      (asserts! (> block-height expiry) (err u108)) ;; Must be expired
+      (match (as-contract (stx-transfer? amount tx-sender creator))
+        success
+          (begin
+            (map-set VaultStorage
+              { vault-id: vault-id }
+              (merge vault-data { vault-state: "expired" })
+            )
+            (print {action: "expired_vault_claimed", vault-id: vault-id, creator: creator, amount: amount})
+            (ok true)
+          )
+        error ERR_TRANSFER_FAILED
+      )
+    )
+  )
+)
+
+;; Initiate vault dispute
+(define-public (dispute-vault (vault-id uint) (reason (string-ascii 50)))
+  (begin
+    (asserts! (valid-vault-id? vault-id) ERR_BAD_ID)
+    (let
+      (
+        (vault-data (unwrap! (map-get? VaultStorage { vault-id: vault-id }) ERR_NO_VAULT))
+        (creator (get creator vault-data))
+        (recipient (get recipient vault-data))
+      )
+      (asserts! (or (is-eq tx-sender creator) (is-eq tx-sender recipient)) ERR_NOT_ALLOWED)
+      (asserts! (or (is-eq (get vault-state vault-data) "pending") (is-eq (get vault-state vault-data) "accepted")) ERR_ALREADY_HANDLED)
+      (asserts! (<= block-height (get end-block vault-data)) ERR_VAULT_EXPIRED)
+      (map-set VaultStorage
+        { vault-id: vault-id }
+        (merge vault-data { vault-state: "disputed" })
+      )
+      (print {action: "vault_disputed", vault-id: vault-id, disputant: tx-sender, reason: reason})
+      (ok true)
+    )
+  )
+)
+
 

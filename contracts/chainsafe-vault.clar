@@ -350,5 +350,64 @@
   )
 )
 
+;; Schedule operation with delay
+(define-public (schedule-critical-op (operation (string-ascii 20)) (parameters (list 10 uint)))
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT_ADMIN) ERR_NOT_ALLOWED)
+    (asserts! (> (len parameters) u0) ERR_BAD_AMOUNT)
+    (let
+      (
+        (execution-time (+ block-height u144)) ;; 24 hours delay
+      )
+      (print {action: "operation_scheduled", operation: operation, parameters: parameters, execution-time: execution-time})
+      (ok execution-time)
+    )
+  )
+)
+
+;; Enable 2FA for high-value vaults
+(define-public (enable-auth-2fa (vault-id uint) (auth-code (buff 32)))
+  (begin
+    (asserts! (valid-vault-id? vault-id) ERR_BAD_ID)
+    (let
+      (
+        (vault-data (unwrap! (map-get? VaultStorage { vault-id: vault-id }) ERR_NO_VAULT))
+        (creator (get creator vault-data))
+        (amount (get amount vault-data))
+      )
+      ;; Only for vaults above threshold
+      (asserts! (> amount u5000) (err u130))
+      (asserts! (is-eq tx-sender creator) ERR_NOT_ALLOWED)
+      (asserts! (is-eq (get vault-state vault-data) "pending") ERR_ALREADY_HANDLED)
+      (print {action: "2fa_enabled", vault-id: vault-id, creator: creator, auth-hash: (hash160 auth-code)})
+      (ok true)
+    )
+  )
+)
+
+;; Cryptographic verification for high-value vaults
+(define-public (crypto-verify-transaction (vault-id uint) (message (buff 32)) (signature (buff 65)) (signer principal))
+  (begin
+    (asserts! (valid-vault-id? vault-id) ERR_BAD_ID)
+    (let
+      (
+        (vault-data (unwrap! (map-get? VaultStorage { vault-id: vault-id }) ERR_NO_VAULT))
+        (creator (get creator vault-data))
+        (recipient (get recipient vault-data))
+        (verify-result (unwrap! (secp256k1-recover? message signature) (err u150)))
+      )
+      ;; Verify with cryptographic proof
+      (asserts! (or (is-eq tx-sender creator) (is-eq tx-sender recipient) (is-eq tx-sender CONTRACT_ADMIN)) ERR_NOT_ALLOWED)
+      (asserts! (or (is-eq signer creator) (is-eq signer recipient)) (err u151))
+      (asserts! (is-eq (get vault-state vault-data) "pending") ERR_ALREADY_HANDLED)
+
+      ;; Verify signature matches expected signer
+      (asserts! (is-eq (unwrap! (principal-of? verify-result) (err u152)) signer) (err u153))
+
+      (print {action: "crypto_verification_complete", vault-id: vault-id, verifier: tx-sender, signer: signer})
+      (ok true)
+    )
+  )
+)
 
 

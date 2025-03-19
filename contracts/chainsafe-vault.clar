@@ -300,4 +300,55 @@
   )
 )
 
+;; Freeze suspicious vault
+(define-public (freeze-suspicious-vault (vault-id uint) (reason (string-ascii 100)))
+  (begin
+    (asserts! (valid-vault-id? vault-id) ERR_BAD_ID)
+    (let
+      (
+        (vault-data (unwrap! (map-get? VaultStorage { vault-id: vault-id }) ERR_NO_VAULT))
+        (creator (get creator vault-data))
+        (recipient (get recipient vault-data))
+      )
+      (asserts! (or (is-eq tx-sender CONTRACT_ADMIN) (is-eq tx-sender creator) (is-eq tx-sender recipient)) ERR_NOT_ALLOWED)
+      (asserts! (or (is-eq (get vault-state vault-data) "pending") 
+                   (is-eq (get vault-state vault-data) "accepted")) 
+                ERR_ALREADY_HANDLED)
+      (map-set VaultStorage
+        { vault-id: vault-id }
+        (merge vault-data { vault-state: "frozen" })
+      )
+      (print {action: "vault_frozen", vault-id: vault-id, reporter: tx-sender, reason: reason})
+      (ok true)
+    )
+  )
+)
+
+;; Create staged payment vault
+(define-public (create-staged-vault (recipient principal) (token-id uint) (amount uint) (phases uint))
+  (let 
+    (
+      (new-id (+ (var-get current-vault-id) u1))
+      (end-date (+ block-height VAULT_TIMEOUT_BLOCKS))
+      (phase-amount (/ amount phases))
+    )
+    (asserts! (> amount u0) ERR_BAD_AMOUNT)
+    (asserts! (> phases u0) ERR_BAD_AMOUNT)
+    (asserts! (<= phases u5) ERR_BAD_AMOUNT) ;; Max 5 phases
+    (asserts! (valid-recipient? recipient) ERR_BAD_CREATOR)
+    (asserts! (is-eq (* phase-amount phases) amount) (err u121)) ;; Ensure even division
+    (match (stx-transfer? amount tx-sender (as-contract tx-sender))
+      success
+        (begin
+          (var-set current-vault-id new-id)
+          (print {action: "staged_vault_created", vault-id: new-id, creator: tx-sender, recipient: recipient, 
+                  token-id: token-id, amount: amount, phases: phases, phase-amount: phase-amount})
+          (ok new-id)
+        )
+      error ERR_TRANSFER_FAILED
+    )
+  )
+)
+
+
 

@@ -245,4 +245,59 @@
   )
 )
 
+;; Resolve dispute with arbitration
+(define-public (resolve-dispute (vault-id uint) (creator-percentage uint))
+  (begin
+    (asserts! (valid-vault-id? vault-id) ERR_BAD_ID)
+    (asserts! (is-eq tx-sender CONTRACT_ADMIN) ERR_NOT_ALLOWED)
+    (asserts! (<= creator-percentage u100) ERR_BAD_AMOUNT) ;; Percentage must be 0-100
+    (let
+      (
+        (vault-data (unwrap! (map-get? VaultStorage { vault-id: vault-id }) ERR_NO_VAULT))
+        (creator (get creator vault-data))
+        (recipient (get recipient vault-data))
+        (amount (get amount vault-data))
+        (creator-amount (/ (* amount creator-percentage) u100))
+        (recipient-amount (- amount creator-amount))
+      )
+      (asserts! (is-eq (get vault-state vault-data) "disputed") (err u112)) ;; Must be disputed
+      (asserts! (<= block-height (get end-block vault-data)) ERR_VAULT_EXPIRED)
+
+      ;; Send creator's portion
+      (unwrap! (as-contract (stx-transfer? creator-amount tx-sender creator)) ERR_TRANSFER_FAILED)
+
+      ;; Send recipient's portion
+      (unwrap! (as-contract (stx-transfer? recipient-amount tx-sender recipient)) ERR_TRANSFER_FAILED)
+
+      (map-set VaultStorage
+        { vault-id: vault-id }
+        (merge vault-data { vault-state: "resolved" })
+      )
+      (print {action: "dispute_resolved", vault-id: vault-id, creator: creator, recipient: recipient, 
+              creator-amount: creator-amount, recipient-amount: recipient-amount, creator-percentage: creator-percentage})
+      (ok true)
+    )
+  )
+)
+
+;; Add extra approval for high-value vaults
+(define-public (add-additional-approval (vault-id uint) (approver principal))
+  (begin
+    (asserts! (valid-vault-id? vault-id) ERR_BAD_ID)
+    (let
+      (
+        (vault-data (unwrap! (map-get? VaultStorage { vault-id: vault-id }) ERR_NO_VAULT))
+        (creator (get creator vault-data))
+        (amount (get amount vault-data))
+      )
+      ;; Only for high-value vaults (> 1000 STX)
+      (asserts! (> amount u1000) (err u120))
+      (asserts! (or (is-eq tx-sender creator) (is-eq tx-sender CONTRACT_ADMIN)) ERR_NOT_ALLOWED)
+      (asserts! (is-eq (get vault-state vault-data) "pending") ERR_ALREADY_HANDLED)
+      (print {action: "approval_added", vault-id: vault-id, approver: approver, requestor: tx-sender})
+      (ok true)
+    )
+  )
+)
+
 

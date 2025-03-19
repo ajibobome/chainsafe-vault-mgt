@@ -101,4 +101,59 @@
   )
 )
 
+;; Creator requests vault cancellation
+(define-public (cancel-vault (vault-id uint))
+  (begin
+    (asserts! (valid-vault-id? vault-id) ERR_BAD_ID)
+    (let
+      (
+        (vault-data (unwrap! (map-get? VaultStorage { vault-id: vault-id }) ERR_NO_VAULT))
+        (creator (get creator vault-data))
+        (amount (get amount vault-data))
+      )
+      (asserts! (is-eq tx-sender creator) ERR_NOT_ALLOWED)
+      (asserts! (is-eq (get vault-state vault-data) "pending") ERR_ALREADY_HANDLED)
+      (asserts! (<= block-height (get end-block vault-data)) ERR_VAULT_EXPIRED)
+      (match (as-contract (stx-transfer? amount tx-sender creator))
+        success
+          (begin
+            (map-set VaultStorage
+              { vault-id: vault-id }
+              (merge vault-data { vault-state: "cancelled" })
+            )
+            (print {action: "vault_cancelled", vault-id: vault-id, creator: creator, amount: amount})
+            (ok true)
+          )
+        error ERR_TRANSFER_FAILED
+      )
+    )
+  )
+)
+
+;; Extend vault duration
+(define-public (extend-vault-duration (vault-id uint) (extra-blocks uint))
+  (begin
+    (asserts! (valid-vault-id? vault-id) ERR_BAD_ID)
+    (asserts! (> extra-blocks u0) ERR_BAD_AMOUNT)
+    (asserts! (<= extra-blocks u1440) ERR_BAD_AMOUNT) ;; Max ~10 days extension
+    (let
+      (
+        (vault-data (unwrap! (map-get? VaultStorage { vault-id: vault-id }) ERR_NO_VAULT))
+        (creator (get creator vault-data)) 
+        (recipient (get recipient vault-data))
+        (current-end (get end-block vault-data))
+        (updated-end (+ current-end extra-blocks))
+      )
+      (asserts! (or (is-eq tx-sender creator) (is-eq tx-sender recipient) (is-eq tx-sender CONTRACT_ADMIN)) ERR_NOT_ALLOWED)
+      (asserts! (or (is-eq (get vault-state vault-data) "pending") (is-eq (get vault-state vault-data) "accepted")) ERR_ALREADY_HANDLED)
+      (map-set VaultStorage
+        { vault-id: vault-id }
+        (merge vault-data { end-block: updated-end })
+      )
+      (print {action: "vault_extended", vault-id: vault-id, requestor: tx-sender, new-end-block: updated-end})
+      (ok true)
+    )
+  )
+)
+
 
